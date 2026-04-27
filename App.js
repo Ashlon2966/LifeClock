@@ -2,10 +2,6 @@ import React, { useState, useEffect, useRef } from 'react';
 import { StyleSheet, Text, View, TextInput, Button, Pressable, Alert, ScrollView, TouchableOpacity, Animated, Switch, Platform, AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFonts } from 'expo-font'; 
-
-// ==========================================
-// 1. HELPERS & MATH
-// ==========================================
 const getBrightness = (hex) => {
   if (!hex || hex.length !== 7) return 128; 
   const r = parseInt(hex.slice(1, 3), 16);
@@ -81,9 +77,6 @@ const getGlowStyle = (shape, size, color) => {
   }
 };
 
-// ==========================================
-// 2. STATIC CONFIGURATIONS & ARRAYS
-// ==========================================
 const availableFonts = [
   { label: 'Not set (Normal)', value: 'normal' },
   { label: '14 Segment LED', value: '14Segment' },
@@ -171,9 +164,6 @@ const rawGlowColors = Array.from(new Set([
   '#000080', '#191970', '#006400', '#008000', '#228B22', '#2E8B57', '#3CB371', '#20B2AA', '#66CDAA', '#8FBC8F', '#4682B4', '#5F9EA0'
 ]));
 
-// ==========================================
-// 3. ODOMETER COMPONENT
-// ==========================================
 const SlidingSeconds = ({ value, textColor, selectedFont }) => {
   const [prev, setPrev] = useState(value);
   const [curr, setCurr] = useState(value);
@@ -202,9 +192,6 @@ const SlidingSeconds = ({ value, textColor, selectedFont }) => {
   );
 };
 
-// ==========================================
-// 4. MAIN APP COMPONENT
-// ==========================================
 export default function App() {
   const [fontsLoaded] = useFonts({
     '14Segment': require('./assets/14 Segment LED Regular.ttf'),
@@ -235,7 +222,6 @@ export default function App() {
     'TechnologyItalic': require('./assets/Technology-Italic.ttf'),
   });
 
-  // --- APP STATE FOR CONTINUOUS ANIMATIONS ---
   const appState = useRef(AppState.currentState);
   const [appStateVisible, setAppStateVisible] = useState(appState.current);
 
@@ -433,12 +419,6 @@ export default function App() {
 
   const isTextVisible = displayMode !== 'hidden' && showDigital;
 
-  // ==========================================
-  // UNKILLABLE ANIMATION ENGINES
-  // Automatically restarts loops if app state or toggles change
-  // ==========================================
-
-  // 1. VISIBILITY & TEXT PULSE ENGINE
   useEffect(() => {
     if (isTextVisible) {
       if (enablePulseAnimation) {
@@ -462,7 +442,6 @@ export default function App() {
     return () => { if (loopAnimRef.current) loopAnimRef.current.stop(); };
   }, [isTextVisible, enablePulseAnimation, appStateVisible]);
 
-  // 2. FOG GLOW ENGINE
   useEffect(() => {
     let loop1, loop2;
     if (enableGlowFX) {
@@ -490,7 +469,6 @@ export default function App() {
     };
   }, [enableGlowFX, appStateVisible]);
 
-  // 3. GLITCH / SHUDDER ENGINE
   useEffect(() => {
     let glitchTimeout;
     let isActive = true;
