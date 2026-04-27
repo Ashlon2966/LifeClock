@@ -1,50 +1,36 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { StyleSheet, Text, View, TextInput, Button, Pressable, Alert, ScrollView, TouchableOpacity, Animated, Switch, Platform, AppState } from 'react-native';
+import { StyleSheet, Text, View, TextInput, Button, Pressable, Alert, ScrollView, TouchableOpacity, Animated, Switch, Platform, AppState, StatusBar } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFonts } from 'expo-font'; 
-const getBrightness = (hex) => {
-  if (!hex || hex.length !== 7) return 128; 
-  const r = parseInt(hex.slice(1, 3), 16);
-  const g = parseInt(hex.slice(3, 5), 16);
-  const b = parseInt(hex.slice(5, 7), 16);
-  return (r * 299 + g * 587 + b * 114) / 1000;
-};
+import Slider from '@react-native-community/slider';
+import * as NavigationBar from 'expo-navigation-bar';
 
-const hexToHSL = (hex) => {
-  let r = parseInt(hex.slice(1, 3), 16) / 255;
-  let g = parseInt(hex.slice(3, 5), 16) / 255;
-  let b = parseInt(hex.slice(5, 7), 16) / 255;
-  let max = Math.max(r, g, b), min = Math.min(r, g, b);
-  let h = 0, s = 0, l = (max + min) / 2;
-  if (max !== min) {
-    let d = max - min;
-    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-    switch (max) {
-      case r: h = (g - b) / d + (g < b ? 6 : 0); break;
-      case g: h = (b - r) / d + 2; break;
-      case b: h = (r - g) / d + 4; break;
-    }
-    h /= 6;
+// 🚀 HARDWARE LIBRARIES
+import { useKeepAwake } from 'expo-keep-awake';
+import { LinearGradient } from 'expo-linear-gradient';
+
+// ==========================================
+// 1. HELPERS & MATH
+// ==========================================
+const hexToRgb = (hex) => {
+  if (!hex || typeof hex !== 'string') return { r: 0, g: 0, b: 0 }; 
+  let r = 0, g = 0, b = 0;
+  if (hex.length === 4) {
+    r = parseInt(hex[1] + hex[1], 16); g = parseInt(hex[2] + hex[2], 16); b = parseInt(hex[3] + hex[3], 16);
+  } else if (hex.length >= 7) {
+    r = parseInt(hex[1] + hex[2], 16); g = parseInt(hex[3] + hex[4], 16); b = parseInt(hex[5] + hex[6], 16);
   }
-  return { h: h * 360, s, l };
+  return { r, g, b };
 };
 
-const sortColorsPalette = (colors, direction) => {
-  return [...colors].sort((a, b) => {
-    const hslA = hexToHSL(a);
-    const hslB = hexToHSL(b);
-    const isGreyA = hslA.s < 0.15 || hslA.l < 0.1 || hslA.l > 0.95;
-    const isGreyB = hslB.s < 0.15 || hslB.l < 0.1 || hslB.l > 0.95;
-    if (isGreyA && !isGreyB) return -1; 
-    if (!isGreyA && isGreyB) return 1;
-    if (isGreyA && isGreyB) {
-      return direction === 'lightToDark' ? hslB.l - hslA.l : hslA.l - hslB.l;
-    }
-    const hueBucketA = Math.floor(hslA.h / 30);
-    const hueBucketB = Math.floor(hslB.h / 30);
-    if (hueBucketA !== hueBucketB) return hueBucketA - hueBucketB;
-    return direction === 'lightToDark' ? hslB.l - hslA.l : hslA.l - hslB.l;
-  });
+const rgbToHex = (r, g, b) => {
+  return "#" + (1 << 24 | r << 16 | g << 8 | b).toString(16).slice(1).toUpperCase();
+};
+
+const getBrightness = (hex) => {
+  if (!hex || typeof hex !== 'string') return 128; 
+  const { r, g, b } = hexToRgb(hex);
+  return (r * 299 + g * 587 + b * 114) / 1000;
 };
 
 const getFontFamily = (val) => {
@@ -52,31 +38,9 @@ const getFontFamily = (val) => {
   return val;
 };
 
-const getGlowStyle = (shape, size, color) => {
-  let base = {
-    position: 'absolute',
-    shadowColor: color,
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.8,
-    shadowRadius: 30,
-    elevation: 10,
-  };
-
-  switch (shape) {
-    case 'square': return { ...base, width: size, height: size, backgroundColor: color };
-    case 'rectangle': return { ...base, width: size * 1.3, height: size * 0.7, backgroundColor: color };
-    case 'oval': return { ...base, width: size * 1.3, height: size * 0.7, borderRadius: size, backgroundColor: color };
-    case 'blood': return { ...base, width: size * 1.2, height: size * 0.8, borderRadius: size, backgroundColor: color };
-    case 'pyramid': return {
-        ...base, width: 0, height: 0, backgroundColor: 'transparent', borderStyle: 'solid',
-        borderLeftWidth: size / 1.8, borderRightWidth: size / 1.8, borderBottomWidth: size * 1.1,
-        borderLeftColor: 'transparent', borderRightColor: 'transparent', borderBottomColor: color,
-      };
-    case 'circle':
-    default: return { ...base, width: size, height: size, borderRadius: size / 2, backgroundColor: color };
-  }
-};
-
+// ==========================================
+// 2. STATIC CONFIGURATIONS (ALL 27 FONTS)
+// ==========================================
 const availableFonts = [
   { label: 'Not set (Normal)', value: 'normal' },
   { label: '14 Segment LED', value: '14Segment' },
@@ -116,83 +80,111 @@ const availableShapes = [
   { label: 'Blood Pool (Organic)', value: 'blood' },
 ];
 
-const bgColors = Array.from(new Set([
-  '#000000', '#050505', '#0A0A0A', '#111111', '#151515', '#1A1A1A', '#222222', '#2A2A2A', '#333333', '#3A3A3A', '#444444', '#4D4D4D', 
-  '#555555', '#666666', '#777777', '#808080', '#888888', '#999999', '#AAAAAA', '#A9A9A9', '#B3B3B3', '#BBBBBB', '#CCCCCC', '#D3D3D3', 
-  '#DCDCDC', '#E0E0E0', '#E6E6E6', '#EEEEEE', '#F2F2F2', '#F8F8FF', '#FAFAFA', '#FFFFFF', '#001122', '#001F3F', '#002B5E', '#003366', 
-  '#004080', '#0074D9', '#39CCCC', '#3D9970', '#2ECC40', '#01FF70', '#FFDC00', '#FF851B', '#FF4136', '#85144b', '#A31526', '#C71585', 
-  '#F012BE', '#B10DC9', '#4B0082', '#F0F8FF', '#FFF0F5', '#FFE4E1', '#E0FFFF', '#FAFAD2', '#2F4F4F', '#191970', '#2E8B57', '#8B0000'
-]));
+const availableGlowAnimations = [
+  { label: '1. Breathing (Default)', value: 'breathe' },
+  { label: '2. Melting (Drip)', value: 'melt' },
+  { label: '3. Spinning Vortex', value: 'spin' },
+  { label: '4. Heartbeat', value: 'heartbeat' },
+  { label: '5. Unstable Flicker', value: 'flicker' },
+  { label: '6. Radar Sweep', value: 'radar' },
+  { label: '7. Ghosting (Wander)', value: 'ghost' },
+  { label: '8. Glitch Overload', value: 'glitch' },
+  { label: '9. Toxic Sway', value: 'sway' },
+  { label: '10. Frozen (Static)', value: 'static' }
+];
 
-const mainColors = Array.from(new Set([
-  '#FFFFFF', '#FDFDFD', '#FAFAFA', '#F2F2F2', '#EEEEEE', '#E6E6E6', '#E0E0E0', '#CCCCCC', '#C0C0C0', '#B3B3B3', '#AAAAAA', '#999999',
-  '#888888', '#808080', '#777777', '#666666', '#555555', '#4D4D4D', '#444444', '#333333', '#2A2A2A', '#222222', '#1A1A1A', '#111111', 
-  '#0A0A0A', '#000000', '#FF3B30', '#FF4500', '#FF6347', '#FF8C00', '#FF9500', '#FFA500', '#FFCC00', '#FFD700', '#FFFF00', '#ADFF2F', 
-  '#7FFF00', '#32CD32', '#4CD964', '#00FF00', '#00FA9A', '#5AC8FA', '#00FFFF', '#00BFFF', '#1E90FF', '#007AFF', '#0000FF', '#00008B', 
-  '#5856D6', '#8A2BE2', '#9400D3', '#FF2D55', '#FF00FF', '#FF1493', '#FF69B4', '#DC143C', '#8E8E93', '#C7C7CC', '#D1D1D6', '#E5E5EA',
-  '#900C3F', '#C70039', '#FF5733', '#FFC300', '#DAF7A6', '#28B463', '#117A65', '#2980B9', '#8E44AD', '#2C3E50', '#F39C12', '#D35400'
-]));
+const defaultPrimaryHints = ['NONE', 'TIME REMAINING', 'DAYS REMAINING'];
+const defaultHints = ['NONE', 'SUBJECT ACTIVE', 'PHASE 2 INITIATED', 'HEART RATE LINKED', 'SYSTEM CALIBRATING'];
+const defaultHints2 = ['NONE', 'HEART SYNC: STABLE', 'HEART SYNC: LOST', 'CONNECTION SEVERED', 'OVERRIDE ACCEPTED'];
 
-const secondColors = Array.from(new Set([
-  '#FF3B30', '#FF4500', '#FF6347', '#FF8C00', '#FF9500', '#FFA500', '#FFCC00', '#FFD700', '#FFFF00', '#ADFF2F', '#7FFF00', '#32CD32', 
-  '#4CD964', '#00FF00', '#00FA9A', '#5AC8FA', '#00FFFF', '#00BFFF', '#1E90FF', '#007AFF', '#0000FF', '#5856D6', '#8A2BE2', '#9400D3', 
-  '#FF2D55', '#FF00FF', '#FF1493', '#FF69B4', '#DC143C', '#FFFFFF', '#F2F2F2', '#E6E6E6', '#CCCCCC', '#B3B3B3', '#999999', '#808080', 
-  '#666666', '#4D4D4D', '#333333', '#1A1A1A', '#000000', '#8E8E93', '#C7C7CC', '#D1D1D6', '#E5E5EA', '#900C3F', '#C70039', '#FF5733'
-]));
+// ==========================================
+// 3. CUSTOM COMPONENTS
+// ==========================================
+const AdvancedColorPicker = ({ label, color, onColorChange }) => {
+  const safeColor = color || '#FF0000'; 
+  const [rgb, setRgb] = useState(hexToRgb(safeColor));
+  const [hexInput, setHexInput] = useState(safeColor);
 
-const digitalColors = Array.from(new Set([
-  '#FFFFFF', '#FAFAFA', '#F0F0F0', '#E8E8E8', '#E0E0E0', '#D8D8D8', '#D0D0D0', '#C8C8C8', '#C0C0C0', '#B8B8B8', '#B0B0B0', '#A8A8A8', 
-  '#A0A0A0', '#989898', '#909090', '#888888', '#808080', '#787878', '#707070', '#686868', '#606060', '#585858', '#505050', '#484848', 
-  '#404040', '#383838', '#303030', '#282828', '#202020', '#181818', '#101010', '#080808', '#000000', '#FF3B30', '#FF4500', '#FF9500', 
-  '#FFD700', '#FFFF00', '#ADFF2F', '#32CD32', '#00FF00', '#4CD964', '#00FA9A', '#00FFFF', '#5AC8FA', '#1E90FF', '#007AFF', '#0000FF', 
-  '#8A2BE2', '#5856D6', '#FF00FF', '#FF1493', '#FF2D55', '#DC143C', '#C70039', '#900C3F', '#2980B9', '#2C3E50', '#F39C12', '#D35400'
-]));
+  useEffect(() => {
+    const c = color || '#FF0000';
+    setRgb(hexToRgb(c));
+    setHexInput(c);
+  }, [color]);
 
-const subtextColors = Array.from(new Set([
-  '#FFFFFF', '#FAFAFA', '#F0F0F0', '#E8E8E8', '#E0E0E0', '#D8D8D8', '#D0D0D0', '#C8C8C8', '#C0C0C0', '#B8B8B8', '#B0B0B0', '#A8A8A8', 
-  '#A0A0A0', '#989898', '#909090', '#888888', '#808080', '#787878', '#707070', '#686868', '#606060', '#585858', '#505050', '#484848', 
-  '#404040', '#383838', '#303030', '#282828', '#202020', '#181818', '#101010', '#080808', '#000000', '#FF3B30', '#FF4500', '#FF9500', 
-  '#FFD700', '#FFFF00', '#ADFF2F', '#32CD32', '#00FF00', '#4CD964', '#00FA9A', '#00FFFF', '#5AC8FA', '#1E90FF', '#007AFF', '#0000FF', 
-  '#8A2BE2', '#5856D6', '#FF00FF', '#FF1493', '#FF2D55', '#DC143C', '#C70039', '#900C3F', '#2980B9', '#2C3E50', '#F39C12', '#D35400'
-]));
+  const handleSliderChange = (type, value) => {
+    const newRgb = { ...rgb, [type]: Math.round(value) };
+    setRgb(newRgb);
+    const newHex = rgbToHex(newRgb.r, newRgb.g, newRgb.b);
+    setHexInput(newHex);
+    onColorChange(newHex);
+  };
 
-const rawGlowColors = Array.from(new Set([
-  '#FFFFFF', '#FF0000', '#FF3B30', '#FF4500', '#FF8C00', '#FF9500', '#FFCC00', '#FFFF00', '#ADFF2F', '#32CD32', '#00FF00', '#00FA9A',
-  '#00FFFF', '#1E90FF', '#0000FF', '#8A2BE2', '#9400D3', '#FF00FF', '#FF1493', '#DC143C', '#800000', '#8B0000', '#B22222', '#A52A2A',
-  '#D2691E', '#FF7F50', '#F08080', '#FA8072', '#E9967A', '#FFA07A', '#FFB6C1', '#FFC0CB', '#DB7093', '#C71585', '#DDA0DD', '#DA70D6',
-  '#EE82EE', '#BA55D3', '#9370DB', '#4B0082', '#483D8B', '#6A5ACD', '#7B68EE', '#9932CC', '#0000CD', '#00008B',
-  '#000080', '#191970', '#006400', '#008000', '#228B22', '#2E8B57', '#3CB371', '#20B2AA', '#66CDAA', '#8FBC8F', '#4682B4', '#5F9EA0'
-]));
+  const handleHexSubmit = (text) => {
+    let formatted = text.startsWith('#') ? text : '#' + text;
+    setHexInput(formatted);
+    if (/^#[0-9A-F]{6}$/i.test(formatted)) {
+      setRgb(hexToRgb(formatted));
+      onColorChange(formatted.toUpperCase());
+    }
+  };
 
-const SlidingSeconds = ({ value, textColor, selectedFont }) => {
+  return (
+    <View style={styles.colorPickerContainer}>
+      <Text style={styles.colorPickerTitle}>{label}</Text>
+      <View style={styles.hexInputRow}>
+        <View style={[styles.colorPreviewBubble, { backgroundColor: safeColor }]} />
+        <Text style={styles.hexLabel}>HEX:</Text>
+        <TextInput style={styles.hexInput} value={hexInput} onChangeText={handleHexSubmit} maxLength={7} autoCapitalize="characters" />
+      </View>
+      <View style={styles.sliderRow}>
+        <Text style={[styles.sliderLabel, {color: '#FF3B30'}]}>R</Text>
+        <Slider style={styles.slider} minimumValue={0} maximumValue={255} value={rgb.r} onValueChange={(val) => handleSliderChange('r', val)} minimumTrackTintColor="#FF3B30" thumbTintColor="#FF3B30" />
+        <Text style={styles.sliderValue}>{rgb.r}</Text>
+      </View>
+      <View style={styles.sliderRow}>
+        <Text style={[styles.sliderLabel, {color: '#34C759'}]}>G</Text>
+        <Slider style={styles.slider} minimumValue={0} maximumValue={255} value={rgb.g} onValueChange={(val) => handleSliderChange('g', val)} minimumTrackTintColor="#34C759" thumbTintColor="#34C759" />
+        <Text style={styles.sliderValue}>{rgb.g}</Text>
+      </View>
+      <View style={styles.sliderRow}>
+        <Text style={[styles.sliderLabel, {color: '#007AFF'}]}>B</Text>
+        <Slider style={styles.slider} minimumValue={0} maximumValue={255} value={rgb.b} onValueChange={(val) => handleSliderChange('b', val)} minimumTrackTintColor="#007AFF" thumbTintColor="#007AFF" />
+        <Text style={styles.sliderValue}>{rgb.b}</Text>
+      </View>
+    </View>
+  );
+};
+
+// 🚀 REUSABLE ODOMETER (Now for Hours, Minutes, and Seconds)
+const SlidingOdometer = ({ value, textColor, selectedFont }) => {
   const [prev, setPrev] = useState(value);
   const [curr, setCurr] = useState(value);
-  const anim = useRef(new Animated.Value(-60)).current;
+  const anim = useRef(new Animated.Value(-80)).current;
 
   useEffect(() => {
     if (value !== curr) {
-      setPrev(curr); 
-      setCurr(value); 
-      anim.setValue(-60); 
-      Animated.timing(anim, {
-        toValue: 0,
-        duration: 350, 
-        useNativeDriver: true,
-      }).start();
+      setPrev(curr); setCurr(value); anim.setValue(-80); 
+      Animated.timing(anim, { toValue: 0, duration: 350, useNativeDriver: true }).start();
     }
   }, [value]);
 
   return (
-    <View style={styles.slidingContainer}>
+    <View style={styles.slidingSecondsContainer}>
       <Animated.View style={{ transform: [{ translateY: anim }] }}>
-        <Text style={[styles.digitalText, styles.odometerText, { color: textColor, fontFamily: getFontFamily(selectedFont) }]}>{curr}</Text>
-        <Text style={[styles.digitalText, styles.odometerText, { color: textColor, fontFamily: getFontFamily(selectedFont) }]}>{prev}</Text>
+        <Text style={[styles.digitalTextMain, styles.odometerText, { color: textColor, fontFamily: getFontFamily(selectedFont) }]}>{curr}</Text>
+        <Text style={[styles.digitalTextMain, styles.odometerText, { color: textColor, fontFamily: getFontFamily(selectedFont) }]}>{prev}</Text>
       </Animated.View>
     </View>
   );
 };
 
+// ==========================================
+// 4. MAIN APP COMPONENT
+// ==========================================
 export default function App() {
+  // 🚀 HARDWARE: SCREEN ALWAYS ON
+  useKeepAwake();
+
   const [fontsLoaded] = useFonts({
     '14Segment': require('./assets/14 Segment LED Regular.ttf'),
     'AlexBrush': require('./assets/AlexBrush-Regular.ttf'),
@@ -226,85 +218,85 @@ export default function App() {
   const [appStateVisible, setAppStateVisible] = useState(appState.current);
 
   useEffect(() => {
-    const subscription = AppState.addEventListener('change', nextAppState => {
-      setAppStateVisible(nextAppState);
-    });
+    const subscription = AppState.addEventListener('change', nextAppState => setAppStateVisible(nextAppState));
     return () => subscription.remove();
   }, []);
 
+  // IMMERSIVE FULLSCREEN
+  useEffect(() => {
+    if (Platform.OS === 'android') {
+      NavigationBar.setVisibilityAsync("hidden");
+    }
+  }, [appStateVisible]);
+
+  // UI STATES
   const [showSettings, setShowSettings] = useState(false);
   const [showDigital, setShowDigital] = useState(false); 
   
-  const [showClockNumbers, setShowClockNumbers] = useState(false); 
-  const [displayMode, setDisplayMode] = useState('time'); 
-  const [allowOneTapReveal, setAllowOneTapReveal] = useState(true); 
-  const [selectedFont, setSelectedFont] = useState('normal'); 
-  const [isFontDropdownOpen, setIsFontDropdownOpen] = useState(false); 
-  const [enableAnimation, setEnableAnimation] = useState(true); 
-  const [enablePulseAnimation, setEnablePulseAnimation] = useState(true); 
-  
-  const [enableGlowFX, setEnableGlowFX] = useState(true);
-  const [enableGlitchFX, setEnableGlitchFX] = useState(true);
-  const [cinematicShape, setCinematicShape] = useState('circle');
-  const [isShapeDropdownOpen, setIsShapeDropdownOpen] = useState(false);
-  const [cinematicColor, setCinematicColor] = useState('#FF0000');
-  
-  const [primarySubtext, setPrimarySubtext] = useState('TIME REMAINING');
-  const [statusHint, setStatusHint] = useState('SUBJECT ACTIVE');
-  const [statusHint2, setStatusHint2] = useState('HEART SYNC: STABLE');
-  const [hintHistory, setHintHistory] = useState([]); 
-  
-  const defaultPrimaryHints = ['NONE', 'TIME REMAINING', 'DAYS REMAINING'];
-  const defaultHints = ['NONE', 'SUBJECT ACTIVE', 'PHASE 2 INITIATED', 'HEART RATE LINKED', 'SYSTEM CALIBRATING'];
-  const defaultHints2 = ['NONE', 'HEART SYNC: STABLE', 'HEART SYNC: LOST', 'CONNECTION SEVERED', 'OVERRIDE ACCEPTED'];
-  
-  const allPrimaryHints = Array.from(new Set([...defaultPrimaryHints, ...hintHistory]));
-  const allHints1 = Array.from(new Set([...defaultHints, ...hintHistory]));
-  const allHints2 = Array.from(new Set([...defaultHints2, ...hintHistory]));
-
-  const [isPrimaryDropdownOpen, setIsPrimaryDropdownOpen] = useState(false);
-  const [isStatusDropdownOpen, setIsStatusDropdownOpen] = useState(false);
-  const [isStatus2DropdownOpen, setIsStatus2DropdownOpen] = useState(false);
-
+  // TIME & TARGET STATES
   const [daysRemainingInput, setDaysRemainingInput] = useState('1000'); 
   const [hoursRemainingInput, setHoursRemainingInput] = useState('0'); 
   const [minutesRemainingInput, setMinutesRemainingInput] = useState('0'); 
   const [secondsRemainingInput, setSecondsRemainingInput] = useState('0'); 
-
   const [startDate, setStartDate] = useState(Date.now());
   const [isFrozen, setIsFrozen] = useState(false);
-  
   const [frozenHour, setFrozenHour] = useState('12');
   const [frozenMinute, setFrozenMinute] = useState('00');
   const [frozenSecond, setFrozenSecond] = useState('00');
+  const [displayMode, setDisplayMode] = useState('time'); 
+
+  // CINEMATIC & ATMOSPHERE STATES
+  const [enableGlowFX, setEnableGlowFX] = useState(true);
+  const [enableGlitchFX, setEnableGlitchFX] = useState(true);
+  const [cinematicShape, setCinematicShape] = useState('circle');
+  const [glowAnimationType, setGlowAnimationType] = useState('breathe');
   
+  // 🚀 GRADIENT STATES
+  const [useGradient, setUseGradient] = useState(false);
+  const [gradientColor, setGradientColor] = useState('#220000');
+  const [gradientType, setGradientType] = useState('linear');
+
+  // LABEL STATES
+  const [primarySubtext, setPrimarySubtext] = useState('TIME REMAINING');
+  const [statusHint, setStatusHint] = useState('SUBJECT ACTIVE');
+  const [statusHint2, setStatusHint2] = useState('HEART SYNC: STABLE');
+  const [hintHistory, setHintHistory] = useState([]); 
+  const [isPrimaryDropdownOpen, setIsPrimaryDropdownOpen] = useState(false);
+  const [isStatusDropdownOpen, setIsStatusDropdownOpen] = useState(false);
+  const [isStatus2DropdownOpen, setIsStatus2DropdownOpen] = useState(false);
+
+  const allPrimaryHints = Array.from(new Set([...defaultPrimaryHints, ...hintHistory]));
+  const allHints1 = Array.from(new Set([...defaultHints, ...hintHistory]));
+  const allHints2 = Array.from(new Set([...defaultHints2, ...hintHistory]));
+
+  // INTERFACE STATES
+  const [selectedFont, setSelectedFont] = useState('Technology'); 
+  const [isFontDropdownOpen, setIsFontDropdownOpen] = useState(false);
+  const [allowOneTapReveal, setAllowOneTapReveal] = useState(true); 
+  const [enableAnimation, setEnableAnimation] = useState(true); 
+  const [showClockNumbers, setShowClockNumbers] = useState(false);
+
+  // COLOR STATES
   const [bgColor, setBgColor] = useState('#000000');           
   const [hourMinColor, setHourMinColor] = useState('#FFFFFF'); 
   const [secondColor, setSecondColor] = useState('#FF3B30');   
-  const [digitalColor, setDigitalColor] = useState('#FFFFFF'); 
-  const [subTextColor, setSubTextColor] = useState('#888888'); 
+  const [digitalColor, setDigitalColor] = useState('#FF4500'); 
+  const [subTextColor, setSubTextColor] = useState('#FFFFFF'); 
+  const [cinematicColor, setCinematicColor] = useState('#8B0000');
 
-  const [bgSort, setBgSort] = useState('lightToDark');
-  const [mainSort, setMainSort] = useState('lightToDark');
-  const [secSort, setSecSort] = useState('lightToDark');
-  const [digiSort, setDigiSort] = useState('lightToDark'); 
-  const [subSort, setSubSort] = useState('lightToDark');   
-  const [glowSort, setGlowSort] = useState('lightToDark');   
-
+  // LIVE CLOCK STATES
   const [daysLeft, setDaysLeft] = useState('0');
   const [hoursLeft, setHoursLeft] = useState('0');
   const [minsLeft, setMinsLeft] = useState('00');
   const [secsLeft, setSecsLeft] = useState('00');
-  
   const [currentTime, setCurrentTime] = useState(new Date());
-  
+
   const visibilityAnim = useRef(new Animated.Value(0)).current; 
-  const loopAnimRef = useRef(null); 
   const flickerAnim = useRef(new Animated.Value(1)).current; 
   const glitchTranslateX = useRef(new Animated.Value(0)).current; 
-  const underglowAnim1 = useRef(new Animated.Value(0)).current; 
-  const underglowAnim2 = useRef(new Animated.Value(0)).current;
+  const universalEngineAnim = useRef(new Animated.Value(0)).current; 
 
+  // LOAD SETTINGS
   useEffect(() => {
     const loadSettings = async () => {
       try {
@@ -322,12 +314,15 @@ export default function App() {
         const savedAllowOneTap = await AsyncStorage.getItem('allowOneTapReveal'); 
         const savedSelectedFont = await AsyncStorage.getItem('selectedFont');
         const savedEnableAnim = await AsyncStorage.getItem('enableAnimation'); 
-        const savedEnablePulse = await AsyncStorage.getItem('enablePulseAnimation'); 
         
         const savedEnableGlow = await AsyncStorage.getItem('enableGlowFX');
         const savedEnableGlitch = await AsyncStorage.getItem('enableGlitchFX');
         const savedCinematicShape = await AsyncStorage.getItem('cinematicShape');
-        const savedCinematicColor = await AsyncStorage.getItem('cinematicColor');
+        const savedGlowAnim = await AsyncStorage.getItem('glowAnimationType');
+
+        const savedUseGrad = await AsyncStorage.getItem('useGradient');
+        const savedGradCol = await AsyncStorage.getItem('gradientColor');
+        const savedGradType = await AsyncStorage.getItem('gradientType');
         
         const savedPrimarySub = await AsyncStorage.getItem('primarySubtext');
         const savedStatusHint = await AsyncStorage.getItem('statusHint');
@@ -339,6 +334,7 @@ export default function App() {
         const savedSC = await AsyncStorage.getItem('secondColor');
         const savedDigi = await AsyncStorage.getItem('digitalColor');
         const savedSub = await AsyncStorage.getItem('subTextColor');
+        const savedCineCol = await AsyncStorage.getItem('cinematicColor');
 
         if (savedDays) setDaysRemainingInput(savedDays);
         if (savedHours) setHoursRemainingInput(savedHours);
@@ -354,172 +350,102 @@ export default function App() {
         if (savedAllowOneTap !== null) setAllowOneTapReveal(savedAllowOneTap === 'true');
         if (savedSelectedFont) setSelectedFont(savedSelectedFont);
         if (savedEnableAnim !== null) setEnableAnimation(savedEnableAnim === 'true'); 
-        if (savedEnablePulse !== null) setEnablePulseAnimation(savedEnablePulse === 'true'); 
         
         if (savedEnableGlow !== null) setEnableGlowFX(savedEnableGlow === 'true');
         if (savedEnableGlitch !== null) setEnableGlitchFX(savedEnableGlitch === 'true');
         if (savedCinematicShape) setCinematicShape(savedCinematicShape);
-        if (savedCinematicColor) setCinematicColor(savedCinematicColor);
+        if (savedGlowAnim) setGlowAnimationType(savedGlowAnim);
+
+        if (savedUseGrad !== null) setUseGradient(savedUseGrad === 'true');
+        if (savedGradCol) setGradientColor(savedGradCol);
+        if (savedGradType) setGradientType(savedGradType);
         
         if (savedPrimarySub) setPrimarySubtext(savedPrimarySub);
         if (savedStatusHint) setStatusHint(savedStatusHint);
         if (savedStatusHint2) setStatusHint2(savedStatusHint2);
-        if (savedHintHistory) setHintHistory(JSON.parse(savedHintHistory));
+        
+        if (savedHintHistory) {
+          try { setHintHistory(JSON.parse(savedHintHistory)); } 
+          catch (e) { setHintHistory([]); }
+        }
         
         if (savedBg) setBgColor(savedBg);
         if (savedHMC) setHourMinColor(savedHMC);
         if (savedSC) setSecondColor(savedSC);
         if (savedDigi) setDigitalColor(savedDigi);
         if (savedSub) setSubTextColor(savedSub);
-      } catch (error) {
-        console.log("Error loading data", error);
-      }
+        if (savedCineCol) setCinematicColor(savedCineCol);
+      } catch (error) { console.log(error); }
     };
     loadSettings();
   }, []);
 
+  // TICK ENGINE
   useEffect(() => {
     const interval = setInterval(() => {
       setCurrentTime(new Date());
-
       if (!isFrozen) {
-        const now = Date.now();
-        const elapsedMilliseconds = now - startDate;
-        
-        const daysMs = parseFloat(daysRemainingInput || 0) * 1000 * 60 * 60 * 24;
-        const hoursMs = parseFloat(hoursRemainingInput || 0) * 1000 * 60 * 60;
-        const minsMs = parseFloat(minutesRemainingInput || 0) * 1000 * 60;
-        const secsMs = parseFloat(secondsRemainingInput || 0) * 1000;
-        
-        const totalAllocatedMs = daysMs + hoursMs + minsMs + secsMs;
+        const elapsedMilliseconds = Date.now() - startDate;
+        const totalAllocatedMs = (parseFloat(daysRemainingInput || 0) * 86400000) + (parseFloat(hoursRemainingInput || 0) * 3600000) + (parseFloat(minutesRemainingInput || 0) * 60000) + (parseFloat(secondsRemainingInput || 0) * 1000);
         const remainingMs = totalAllocatedMs - elapsedMilliseconds;
 
         if (remainingMs <= 0) {
-          setDaysLeft('0');
-          setHoursLeft('0');
-          setMinsLeft('00');
-          setSecsLeft('00');
+          setDaysLeft('0'); setHoursLeft('00'); setMinsLeft('00'); setSecsLeft('00');
         } else {
-          const d = Math.floor(remainingMs / (1000 * 60 * 60 * 24));
-          setDaysLeft(String(d));
-
-          const h = Math.floor(remainingMs / (1000 * 60 * 60)); 
-          const m = Math.floor((remainingMs / (1000 * 60)) % 60);
-          const s = Math.floor((remainingMs / 1000) % 60);
-
-          setHoursLeft(String(h));
-          setMinsLeft(String(m).padStart(2, '0'));
-          setSecsLeft(String(s).padStart(2, '0'));
+          setDaysLeft(String(Math.floor(remainingMs / 86400000)));
+          setHoursLeft(String(Math.floor(remainingMs / 3600000)).padStart(2, '0'));
+          setMinsLeft(String(Math.floor((remainingMs / 60000) % 60)).padStart(2, '0'));
+          setSecsLeft(String(Math.floor((remainingMs / 1000) % 60)).padStart(2, '0'));
         }
       }
     }, 1000); 
-
     return () => clearInterval(interval); 
   }, [startDate, daysRemainingInput, hoursRemainingInput, minutesRemainingInput, secondsRemainingInput, isFrozen]);
 
   const isTextVisible = displayMode !== 'hidden' && showDigital;
 
+  // VISIBILITY ENGINE (Instant Fade)
   useEffect(() => {
-    if (isTextVisible) {
-      if (enablePulseAnimation) {
-        Animated.timing(visibilityAnim, { toValue: 1, duration: 800, useNativeDriver: true }).start(() => {
-          loopAnimRef.current = Animated.loop(
-            Animated.sequence([
-              Animated.timing(visibilityAnim, { toValue: 0.35, duration: 1500, useNativeDriver: true }),
-              Animated.timing(visibilityAnim, { toValue: 1, duration: 1500, useNativeDriver: true })
-            ])
-          );
-          loopAnimRef.current.start();
-        });
-      } else {
-        if (loopAnimRef.current) loopAnimRef.current.stop();
-        Animated.timing(visibilityAnim, { toValue: 1, duration: 500, useNativeDriver: true }).start();
-      }
-    } else {
-      if (loopAnimRef.current) loopAnimRef.current.stop();
-      Animated.timing(visibilityAnim, { toValue: 0, duration: 500, useNativeDriver: true }).start();
-    }
-    return () => { if (loopAnimRef.current) loopAnimRef.current.stop(); };
-  }, [isTextVisible, enablePulseAnimation, appStateVisible]);
+    Animated.timing(visibilityAnim, { toValue: isTextVisible ? 1 : 0, duration: 500, useNativeDriver: true }).start();
+  }, [isTextVisible]);
 
+  // GLOW ENGINE
   useEffect(() => {
-    let loop1, loop2;
-    if (enableGlowFX) {
-      loop1 = Animated.loop(
-        Animated.sequence([
-          Animated.timing(underglowAnim1, { toValue: 1, duration: 3800, useNativeDriver: true }),
-          Animated.timing(underglowAnim1, { toValue: 0, duration: 4200, useNativeDriver: true })
-        ])
-      );
-      loop2 = Animated.loop(
-        Animated.sequence([
-          Animated.timing(underglowAnim2, { toValue: 1, duration: 2500, useNativeDriver: true }),
-          Animated.timing(underglowAnim2, { toValue: 0.2, duration: 2900, useNativeDriver: true })
-        ])
-      );
-      loop1.start();
-      loop2.start();
-    } else {
-      underglowAnim1.setValue(0);
-      underglowAnim2.setValue(0);
-    }
-    return () => {
-      if (loop1) loop1.stop();
-      if (loop2) loop2.stop();
-    };
+    const engineLoop = Animated.loop(Animated.timing(universalEngineAnim, { toValue: 1, duration: 4000, useNativeDriver: true }));
+    if (enableGlowFX) engineLoop.start(); else { engineLoop.stop(); universalEngineAnim.setValue(0); }
+    return () => engineLoop.stop();
   }, [enableGlowFX, appStateVisible]);
 
+  // GLITCH ENGINE
   useEffect(() => {
-    let glitchTimeout;
-    let isActive = true;
-    
-    if (!enableGlitchFX) {
-      flickerAnim.setValue(1);
-      glitchTranslateX.setValue(0);
-      return;
-    }
+    let glitchTimeout; let isActive = true;
+    if (!enableGlitchFX) { flickerAnim.setValue(1); glitchTranslateX.setValue(0); return; }
 
     const triggerGlitch = () => {
       if (!isActive) return;
-      const nextGlitchTime = Math.random() * 8000 + 3000; 
       glitchTimeout = setTimeout(() => {
         if (!isActive) return;
         Animated.sequence([
           Animated.timing(flickerAnim, { toValue: 0.3, duration: 40, useNativeDriver: true }),
           Animated.timing(flickerAnim, { toValue: 1, duration: 50, useNativeDriver: true }),
-          Animated.timing(flickerAnim, { toValue: 0.6, duration: 30, useNativeDriver: true }),
-          Animated.timing(flickerAnim, { toValue: 1, duration: 60, useNativeDriver: true }),
-        ]).start();
-
-        Animated.sequence([
-          Animated.timing(glitchTranslateX, { toValue: 3, duration: 20, useNativeDriver: true }),
-          Animated.timing(glitchTranslateX, { toValue: -3, duration: 20, useNativeDriver: true }),
+          Animated.timing(glitchTranslateX, { toValue: 5, duration: 20, useNativeDriver: true }),
+          Animated.timing(glitchTranslateX, { toValue: -5, duration: 20, useNativeDriver: true }),
           Animated.timing(glitchTranslateX, { toValue: 0, duration: 20, useNativeDriver: true }),
-        ]).start(({ finished }) => {
-           if (finished && isActive) triggerGlitch(); 
-        }); 
-      }, nextGlitchTime);
+        ]).start(({ finished }) => { if (finished && isActive) triggerGlitch(); }); 
+      }, Math.random() * 8000 + 3000);
     };
 
     triggerGlitch();
-    return () => {
-      isActive = false;
-      clearTimeout(glitchTimeout);
-      flickerAnim.stopAnimation();
-      glitchTranslateX.stopAnimation();
-      flickerAnim.setValue(1);
-      glitchTranslateX.setValue(0);
-    };
+    return () => { isActive = false; clearTimeout(glitchTimeout); flickerAnim.setValue(1); glitchTranslateX.setValue(0); };
   }, [enableGlitchFX, appStateVisible]);
 
-
+  // SAVE SETTINGS
   const saveSettings = async (restartClock = false) => {
     let newStart = startDate;
     if (restartClock) {
       newStart = Date.now();
       setStartDate(newStart);
     }
-
     setShowDigital(false); 
 
     let updatedHistory = [...hintHistory];
@@ -535,53 +461,46 @@ export default function App() {
     checkAndSaveHint(statusHint2);
     setHintHistory(updatedHistory);
 
-    await AsyncStorage.setItem('hintHistory', JSON.stringify(updatedHistory));
-    await AsyncStorage.setItem('daysRemainingInput', daysRemainingInput);
-    await AsyncStorage.setItem('hoursRemainingInput', hoursRemainingInput);
-    await AsyncStorage.setItem('minutesRemainingInput', minutesRemainingInput);
-    await AsyncStorage.setItem('secondsRemainingInput', secondsRemainingInput);
-    await AsyncStorage.setItem('startDate', newStart.toString());
-    await AsyncStorage.setItem('isFrozen', isFrozen.toString());
-    await AsyncStorage.setItem('frozenHour', frozenHour);
-    await AsyncStorage.setItem('frozenMinute', frozenMinute);
-    await AsyncStorage.setItem('frozenSecond', frozenSecond);
-    await AsyncStorage.setItem('showClockNumbers', showClockNumbers.toString());
-    await AsyncStorage.setItem('displayMode', displayMode);
-    await AsyncStorage.setItem('allowOneTapReveal', allowOneTapReveal.toString()); 
-    await AsyncStorage.setItem('selectedFont', selectedFont);
-    await AsyncStorage.setItem('enableAnimation', enableAnimation.toString()); 
-    await AsyncStorage.setItem('enablePulseAnimation', enablePulseAnimation.toString()); 
-    await AsyncStorage.setItem('enableGlowFX', enableGlowFX.toString()); 
-    await AsyncStorage.setItem('enableGlitchFX', enableGlitchFX.toString()); 
-    await AsyncStorage.setItem('cinematicShape', cinematicShape); 
-    await AsyncStorage.setItem('cinematicColor', cinematicColor); 
-    
-    await AsyncStorage.setItem('primarySubtext', primarySubtext); 
-    await AsyncStorage.setItem('statusHint', statusHint); 
-    await AsyncStorage.setItem('statusHint2', statusHint2); 
-    
-    await AsyncStorage.setItem('bgColor', bgColor);
-    await AsyncStorage.setItem('hourMinColor', hourMinColor);
-    await AsyncStorage.setItem('secondColor', secondColor);
-    await AsyncStorage.setItem('digitalColor', digitalColor);
-    await AsyncStorage.setItem('subTextColor', subTextColor);
-
+    const settingsBatch = [
+      ['hintHistory', JSON.stringify(updatedHistory)],
+      ['daysRemainingInput', daysRemainingInput],
+      ['hoursRemainingInput', hoursRemainingInput],
+      ['minutesRemainingInput', minutesRemainingInput],
+      ['secondsRemainingInput', secondsRemainingInput],
+      ['startDate', newStart.toString()],
+      ['isFrozen', isFrozen.toString()],
+      ['frozenHour', frozenHour],
+      ['frozenMinute', frozenMinute],
+      ['frozenSecond', frozenSecond],
+      ['showClockNumbers', showClockNumbers.toString()],
+      ['displayMode', displayMode],
+      ['allowOneTapReveal', allowOneTapReveal.toString()],
+      ['selectedFont', selectedFont],
+      ['enableAnimation', enableAnimation.toString()],
+      ['enableGlowFX', enableGlowFX.toString()],
+      ['enableGlitchFX', enableGlitchFX.toString()],
+      ['cinematicShape', cinematicShape],
+      ['glowAnimationType', glowAnimationType],
+      ['useGradient', useGradient.toString()],
+      ['gradientColor', gradientColor],
+      ['gradientType', gradientType],
+      ['primarySubtext', primarySubtext],
+      ['statusHint', statusHint],
+      ['statusHint2', statusHint2],
+      ['bgColor', bgColor],
+      ['hourMinColor', hourMinColor],
+      ['secondColor', secondColor],
+      ['digitalColor', digitalColor],
+      ['subTextColor', subTextColor],
+      ['cinematicColor', cinematicColor]
+    ];
+    await AsyncStorage.multiSet(settingsBatch);
     setShowSettings(false);
-    Alert.alert("Saved", restartClock ? "System Override Accepted." : "Configuration Locked.");
   };
 
   const handleDisplayModeSelect = (mode) => {
     setDisplayMode(mode);
-    if (mode === 'hidden') {
-      setAllowOneTapReveal(false);
-    }
-  };
-
-  const handleOneTapToggle = (val) => {
-    setAllowOneTapReveal(val);
-    if (val === true && displayMode === 'hidden') {
-      setDisplayMode('time'); 
-    }
+    if (mode === 'hidden') setAllowOneTapReveal(false);
   };
 
   const hours = isFrozen ? parseInt(frozenHour || 0) : currentTime.getHours();
@@ -602,7 +521,6 @@ export default function App() {
       const radius = 145; 
       const x = radius * Math.sin(angle);
       const y = -radius * Math.cos(angle);
-
       return (
         <View key={number} style={[styles.numberContainer, { transform: [{ translateX: x }, { translateY: y }] }]}>
           <Text style={[styles.clockNumberText, { color: dialTextColor }]}>{number}</Text>
@@ -611,124 +529,86 @@ export default function App() {
     });
   };
 
-  const handleHandColorSelect = (selectedHandColor) => {
-    setHourMinColor(selectedHandColor);
-    const handBrightness = getBrightness(selectedHandColor);
-    const currentBgBrightness = getBrightness(bgColor);
-    if (handBrightness > 160 && currentBgBrightness > 160) {
-      setBgColor('#000000'); 
-    } else if (handBrightness < 90 && currentBgBrightness < 90) {
-      setBgColor('#FFFFFF'); 
-    }
-  };
-
-  const handleBgColorSelect = (selectedBgColor) => {
-    setBgColor(selectedBgColor);
-    const handBrightness = getBrightness(hourMinColor);
-    const newBgBrightness = getBrightness(selectedBgColor);
-    if (handBrightness > 160 && newBgBrightness > 160) {
-      setHourMinColor('#000000'); 
-    } else if (handBrightness < 90 && newBgBrightness < 90) {
-      setHourMinColor('#FFFFFF'); 
-    }
-  };
-
-  const renderColorSection = (title, options, selectedColor, onSelect, sortState, setSortState) => {
-    const uniqueOptions = Array.from(new Set(options));
-    const sortedOptions = sortColorsPalette(uniqueOptions, sortState);
-    return (
-      <View style={styles.paletteSection}>
-        <View style={styles.paletteHeader}>
-          <Text style={styles.label}>{title}</Text>
-          <TouchableOpacity onPress={() => setSortState(sortState === 'lightToDark' ? 'darkToLight' : 'lightToDark')} style={styles.sortButton}>
-            <Text style={styles.sortButtonText}>
-              {sortState === 'lightToDark' ? '⬇ Light to Dark' : '⬆ Dark to Light'}
-            </Text>
-          </TouchableOpacity>
-        </View>
-        <View style={styles.colorRow}>
-          {sortedOptions.map((color, index) => (
-            <TouchableOpacity 
-              key={`${color}-${index}`}
-              onPress={() => onSelect(color)} 
-              style={[styles.colorSwatch, { backgroundColor: color }, selectedColor === color && styles.colorSwatchSelected]} 
-            />
-          ))}
-        </View>
-      </View>
-    );
-  };
-
-  const renderGlowLayer = (baseSize, animValue, index, opMin, opMax, scaleMin, scaleMax) => {
-    const style = getGlowStyle(cinematicShape, baseSize, cinematicColor);
-    let transforms = [{ scale: animValue.interpolate({ inputRange: [0, 1], outputRange: [scaleMin, scaleMax] }) }];
+  const renderGlowLayer = (baseSize, index) => {
+    let base = { position: 'absolute', shadowColor: cinematicColor, shadowOpacity: 0.8, shadowRadius: 30, elevation: 10, backgroundColor: cinematicColor };
     
-    if (cinematicShape === 'blood') {
-       const offsets = [
-          { tx: 25, ty: -15, rot: '15deg' },
-          { tx: -30, ty: 20, rot: '-20deg' },
-          { tx: 10, ty: 35, rot: '45deg' },
-          { tx: -20, ty: -25, rot: '-10deg' }
-       ];
-       transforms.push({ translateX: offsets[index].tx });
-       transforms.push({ translateY: offsets[index].ty });
-       transforms.push({ rotate: offsets[index].rot });
+    switch (cinematicShape) {
+      case 'square': base = { ...base, width: baseSize, height: baseSize }; break;
+      case 'rectangle': base = { ...base, width: baseSize * 1.3, height: baseSize * 0.7 }; break;
+      case 'oval': base = { ...base, width: baseSize * 1.3, height: baseSize * 0.7, borderRadius: baseSize }; break;
+      case 'blood': base = { ...base, width: baseSize * 1.2, height: baseSize * 0.8, borderRadius: baseSize }; break;
+      case 'circle': default: base = { ...base, width: baseSize, height: baseSize, borderRadius: baseSize / 2 }; break;
     }
 
-    return (
-      <Animated.View style={[style, {
-        opacity: animValue.interpolate({ inputRange: [0, 1], outputRange: [opMin, opMax] }),
-        transform: transforms
-      }]} />
-    );
+    let transforms = [];
+    let layerOpacity = 0.15 - (index * 0.03); 
+    const animPhase = universalEngineAnim;
+
+    if (cinematicShape === 'blood') {
+       const offsets = [{ tx: 25, ty: -15, rot: '15deg' }, { tx: -30, ty: 20, rot: '-20deg' }, { tx: 10, ty: 35, rot: '45deg' }, { tx: -20, ty: -25, rot: '-10deg' }];
+       transforms.push({ translateX: offsets[index].tx }, { translateY: offsets[index].ty }, { rotate: offsets[index].rot });
+    }
+
+    switch(glowAnimationType) {
+      case 'melt':
+        transforms.push({ translateY: animPhase.interpolate({ inputRange: [0, 1], outputRange: [0, 80 + (index*20)] }) });
+        transforms.push({ scaleY: animPhase.interpolate({ inputRange: [0, 1], outputRange: [1, 1.8] }) });
+        transforms.push({ scaleX: animPhase.interpolate({ inputRange: [0, 1], outputRange: [1, 0.9] }) });
+        layerOpacity = animPhase.interpolate({ inputRange: [0, 0.7, 1], outputRange: [0.15, 0.15, 0] });
+        break;
+      case 'spin':
+        transforms.push({ rotate: animPhase.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] }) });
+        transforms.push({ scale: 1.1 });
+        break;
+      case 'heartbeat':
+        transforms.push({ scale: animPhase.interpolate({ inputRange: [0, 0.1, 0.2, 0.3, 1], outputRange: [1, 1.15, 1, 1.15, 1] }) });
+        break;
+      case 'radar':
+        transforms.push({ scale: animPhase.interpolate({ inputRange: [0, 1], outputRange: [0.2, 1.5] }) });
+        layerOpacity = animPhase.interpolate({ inputRange: [0, 0.8, 1], outputRange: [0.2, 0.05, 0] });
+        break;
+      case 'sway':
+        transforms.push({ translateX: animPhase.interpolate({ inputRange: [0, 0.5, 1], outputRange: [-20, 20, -20] }) });
+        break;
+      case 'ghost':
+        transforms.push({ translateY: animPhase.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0, -40, 0] }) });
+        layerOpacity = animPhase.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0.05, 0.2, 0.05] });
+        break;
+      case 'breathe':
+      default:
+        transforms.push({ scale: animPhase.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0.95, 1.1, 0.95] }) });
+        layerOpacity = animPhase.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0.05, 0.15, 0.05] });
+        break;
+      case 'static':
+        transforms.push({ scale: 1.05 });
+        break;
+    }
+
+    return <Animated.View style={[base, { opacity: layerOpacity, transform: transforms }]} />;
   };
 
-  const hasMainSub = primarySubtext !== 'NONE' && primarySubtext.trim() !== '';
-  const hasHint1 = statusHint !== 'NONE' && statusHint.trim() !== '';
-  const hasHint2 = statusHint2 !== 'NONE' && statusHint2.trim() !== '';
-  
-  let clockMargin = 60; 
-  if (!hasHint1 && !hasHint2 && !hasMainSub) clockMargin = -30; 
-  else if (!hasHint1 && !hasHint2) clockMargin = -10; 
-  else if (!hasHint2 || !hasHint1) clockMargin = 25; 
-
-  if (!fontsLoaded) {
-    return <View style={styles.container} />; 
-  }
+  const renderDetailed = displayMode === 'time' || (displayMode === 'hidden' && showDigital);
+  if (!fontsLoaded) return <View style={styles.container} />; 
 
   if (showSettings) {
     return (
       <View style={styles.settingsContainer}>
+        <StatusBar hidden={false} />
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-          <Text style={styles.title}>Device Config</Text>
+          <Text style={styles.title}>Director Config</Text>
           
           <Text style={styles.sectionHeader}>Time & Target</Text>
           <Text style={styles.label}>Set Event Horizon:</Text>
-          
           <View style={styles.timeInputRow}>
-            <View style={styles.timeInputWrapper}>
-              <Text style={styles.label}>Days</Text>
-              <TextInput style={styles.input} keyboardType="numeric" value={daysRemainingInput} onChangeText={setDaysRemainingInput} />
-            </View>
+            <View style={styles.timeInputWrapper}><Text style={styles.label}>Days</Text><TextInput style={styles.input} keyboardType="numeric" value={daysRemainingInput} onChangeText={setDaysRemainingInput} /></View>
             <View style={{width: 8}} />
-            <View style={styles.timeInputWrapper}>
-              <Text style={styles.label}>Hours</Text>
-              <TextInput style={styles.input} keyboardType="numeric" value={hoursRemainingInput} onChangeText={setHoursRemainingInput} />
-            </View>
+            <View style={styles.timeInputWrapper}><Text style={styles.label}>Hours</Text><TextInput style={styles.input} keyboardType="numeric" value={hoursRemainingInput} onChangeText={setHoursRemainingInput} /></View>
             <View style={{width: 8}} />
-            <View style={styles.timeInputWrapper}>
-              <Text style={styles.label}>Mins</Text>
-              <TextInput style={styles.input} keyboardType="numeric" value={minutesRemainingInput} onChangeText={setMinutesRemainingInput} />
-            </View>
+            <View style={styles.timeInputWrapper}><Text style={styles.label}>Mins</Text><TextInput style={styles.input} keyboardType="numeric" value={minutesRemainingInput} onChangeText={setMinutesRemainingInput} /></View>
             <View style={{width: 8}} />
-            <View style={styles.timeInputWrapper}>
-              <Text style={styles.label}>Secs</Text>
-              <TextInput style={styles.input} keyboardType="numeric" value={secondsRemainingInput} onChangeText={setSecondsRemainingInput} />
-            </View>
+            <View style={styles.timeInputWrapper}><Text style={styles.label}>Secs</Text><TextInput style={styles.input} keyboardType="numeric" value={secondsRemainingInput} onChangeText={setSecondsRemainingInput} /></View>
           </View>
-
-          <Text style={styles.dateInfoText}>Clock Started: {new Date(startDate).toLocaleString()}</Text>
-
+          
           <Text style={[styles.label, {marginTop: 20}]}>Display Mode:</Text>
           <View style={styles.segmentedControl}>
             <TouchableOpacity style={[styles.segmentButton, displayMode === 'hidden' && styles.segmentActive]} onPress={() => handleDisplayModeSelect('hidden')}>
@@ -744,87 +624,61 @@ export default function App() {
 
           <View style={styles.frozenContainer}>
             <Text style={styles.label}>Analog Engine Override:</Text>
-            <Button title={isFrozen ? "Currently FROZEN (Tap to Unfreeze)" : "Currently RUNNING (Tap to Freeze)"} onPress={() => setIsFrozen(!isFrozen)} color={isFrozen ? "#c0392b" : "#27ae60"} />
-
+            <Button title={isFrozen ? "Currently FROZEN" : "Currently RUNNING"} onPress={() => setIsFrozen(!isFrozen)} color={isFrozen ? "#c0392b" : "#27ae60"} />
             {isFrozen && (
               <View style={styles.timeInputRow}>
-                <View style={styles.timeInputWrapper}>
-                  <Text style={styles.label}>Hour (0-24)</Text>
-                  <TextInput style={styles.input} keyboardType="numeric" maxLength={2} value={frozenHour} onChangeText={setFrozenHour} />
-                </View>
-                <View style={{width: 10}} />
-                <View style={styles.timeInputWrapper}>
-                  <Text style={styles.label}>Min (0-59)</Text>
-                  <TextInput style={styles.input} keyboardType="numeric" maxLength={2} value={frozenMinute} onChangeText={setFrozenMinute} />
-                </View>
-                <View style={{width: 10}} />
-                <View style={styles.timeInputWrapper}>
-                  <Text style={styles.label}>Sec (0-59)</Text>
-                  <TextInput style={styles.input} keyboardType="numeric" maxLength={2} value={frozenSecond} onChangeText={setFrozenSecond} />
-                </View>
+                <View style={styles.timeInputWrapper}><TextInput style={styles.input} keyboardType="numeric" value={frozenHour} onChangeText={setFrozenHour} placeholder="HH" /></View>
+                <View style={styles.timeInputWrapper}><TextInput style={styles.input} keyboardType="numeric" value={frozenMinute} onChangeText={setFrozenMinute} placeholder="MM" /></View>
+                <View style={styles.timeInputWrapper}><TextInput style={styles.input} keyboardType="numeric" value={frozenSecond} onChangeText={setFrozenSecond} placeholder="SS" /></View>
               </View>
             )}
           </View>
 
-          <Text style={styles.sectionHeader}>Cinematic & Atmosphere</Text>
-
-          <View style={styles.switchRow}>
-            <Text style={styles.label}>Enable Fog Glow FX</Text>
-            <Switch value={enableGlowFX} onValueChange={setEnableGlowFX} trackColor={{ true: '#FF3B30' }} />
-          </View>
+          <Text style={styles.sectionHeader}>Cinematic Atmosphere</Text>
+          <View style={styles.switchRow}><Text style={styles.label}>Keep Screen Permanently Awake</Text><Switch value={true} disabled trackColor={{ true: '#007AFF' }} /></View>
+          <View style={styles.switchRow}><Text style={styles.label}>Enable Formatted Glitch FX</Text><Switch value={enableGlitchFX} onValueChange={setEnableGlitchFX} trackColor={{ true: '#FF3B30' }} /></View>
+          <View style={styles.switchRow}><Text style={styles.label}>Enable Backlight Glow</Text><Switch value={enableGlowFX} onValueChange={setEnableGlowFX} trackColor={{ true: '#FF3B30' }} /></View>
+          
+          <View style={styles.switchRow}><Text style={styles.label}>Enable Cinematic BG Gradient</Text><Switch value={useGradient} onValueChange={setUseGradient} trackColor={{ true: '#007AFF' }} /></View>
+          {useGradient && (
+            <View style={{marginBottom: 20}}>
+              <AdvancedColorPicker label="Gradient End Color" color={gradientColor} onColorChange={setGradientColor} />
+              <Text style={styles.label}>Gradient Style:</Text>
+              <View style={styles.segmentedControl}>
+                <TouchableOpacity style={[styles.segmentButton, gradientType === 'linear' && styles.segmentActive]} onPress={() => setGradientType('linear')}><Text style={[styles.segmentText, gradientType === 'linear' && styles.segmentTextActive]}>Vertical</Text></TouchableOpacity>
+                <TouchableOpacity style={[styles.segmentButton, gradientType === 'circular' && styles.segmentActive]} onPress={() => setGradientType('circular')}><Text style={[styles.segmentText, gradientType === 'circular' && styles.segmentTextActive]}>Spotlight</Text></TouchableOpacity>
+              </View>
+            </View>
+          )}
 
           <Text style={[styles.label, {marginTop: 5}]}>Glow Shape Style:</Text>
-          <View style={{zIndex: 3000, marginBottom: 15}}>
-            <TouchableOpacity style={styles.dropdownHeader} onPress={() => setIsShapeDropdownOpen(!isShapeDropdownOpen)}>
-              <Text style={styles.dropdownHeaderText}>
-                {availableShapes.find(s => s.value === cinematicShape)?.label || 'Circle'}
-              </Text>
-              <Text style={{color: '#007AFF', fontWeight: 'bold'}}>{isShapeDropdownOpen ? '▲' : '▼'}</Text>
-            </TouchableOpacity>
-            {isShapeDropdownOpen && (
-              <View style={styles.dropdownListContainer}>
-                {availableShapes.map((shape, index) => (
-                  <TouchableOpacity 
-                    key={shape.value} 
-                    style={[styles.dropdownItem, index === availableShapes.length - 1 && {borderBottomWidth: 0}]} 
-                    onPress={() => { setCinematicShape(shape.value); setIsShapeDropdownOpen(false); }}
-                  >
-                    <Text style={styles.dropdownItemText}>{shape.label}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            )}
+          <View style={{marginBottom: 15}}>
+            {availableShapes.map((s) => (
+              <TouchableOpacity key={s.value} onPress={() => setCinematicShape(s.value)} style={[styles.optionBtn, cinematicShape === s.value && styles.optionBtnActive]}>
+                <Text style={[styles.optionText, cinematicShape === s.value && styles.optionTextActive]}>{s.label}</Text>
+              </TouchableOpacity>
+            ))}
           </View>
-          
-          {renderColorSection(`Glow Color`, rawGlowColors, cinematicColor, setCinematicColor, glowSort, setGlowSort)}
 
-          <View style={[styles.switchRow, {marginTop: 25}]}>
-            <Text style={styles.label}>Enable Glitch / Shudder FX</Text>
-            <Switch value={enableGlitchFX} onValueChange={setEnableGlitchFX} trackColor={{ true: '#FF3B30' }} />
+          <Text style={[styles.label, {marginTop: 5}]}>Glow Animation Engine:</Text>
+          <View style={{marginBottom: 15, flexDirection: 'row', flexWrap: 'wrap', gap: 6}}>
+            {availableGlowAnimations.map((s) => (
+              <TouchableOpacity key={s.value} onPress={() => setGlowAnimationType(s.value)} style={[styles.chipBtn, glowAnimationType === s.value && styles.chipBtnActive]}>
+                <Text style={[styles.chipText, glowAnimationType === s.value && styles.chipTextActive]}>{s.label}</Text>
+              </TouchableOpacity>
+            ))}
           </View>
 
           <Text style={[styles.label, {marginTop: 5}]}>Main Countdown Label:</Text>
           <View style={{zIndex: 2500, marginBottom: 15}}>
             <View style={styles.inputWithDropdownRow}>
-              <TextInput 
-                style={styles.inputWithDropdownText} 
-                value={primarySubtext} 
-                onChangeText={setPrimarySubtext} 
-                placeholder="Enter custom label or select ▼" 
-                placeholderTextColor="#999"
-              />
-              <TouchableOpacity style={styles.dropdownIconButton} onPress={() => setIsPrimaryDropdownOpen(!isPrimaryDropdownOpen)}>
-                <Text style={{color: '#fff', fontSize: 16}}>▼</Text>
-              </TouchableOpacity>
+              <TextInput style={styles.inputWithDropdownText} value={primarySubtext} onChangeText={setPrimarySubtext} />
+              <TouchableOpacity style={styles.dropdownIconButton} onPress={() => setIsPrimaryDropdownOpen(!isPrimaryDropdownOpen)}><Text style={{color: '#fff', fontSize: 16}}>▼</Text></TouchableOpacity>
             </View>
             {isPrimaryDropdownOpen && (
               <View style={styles.dropdownListContainer}>
                 {allPrimaryHints.map((hint, idx) => (
-                  <TouchableOpacity 
-                    key={`main-${idx}`} 
-                    style={[styles.dropdownItem, idx === allPrimaryHints.length - 1 && {borderBottomWidth: 0}]} 
-                    onPress={() => { setPrimarySubtext(hint); setIsPrimaryDropdownOpen(false); }}
-                  >
+                  <TouchableOpacity key={idx} style={styles.dropdownItem} onPress={() => { setPrimarySubtext(hint); setIsPrimaryDropdownOpen(false); }}>
                     <Text style={styles.dropdownItemText}>{hint}</Text>
                   </TouchableOpacity>
                 ))}
@@ -835,25 +689,13 @@ export default function App() {
           <Text style={styles.label}>Device Status Line 1:</Text>
           <View style={{zIndex: 2000, marginBottom: 15}}>
             <View style={styles.inputWithDropdownRow}>
-              <TextInput 
-                style={styles.inputWithDropdownText} 
-                value={statusHint} 
-                onChangeText={setStatusHint} 
-                placeholder="Enter custom tag or select ▼" 
-                placeholderTextColor="#999"
-              />
-              <TouchableOpacity style={styles.dropdownIconButton} onPress={() => setIsStatusDropdownOpen(!isStatusDropdownOpen)}>
-                <Text style={{color: '#fff', fontSize: 16}}>▼</Text>
-              </TouchableOpacity>
+              <TextInput style={styles.inputWithDropdownText} value={statusHint} onChangeText={setStatusHint} />
+              <TouchableOpacity style={styles.dropdownIconButton} onPress={() => setIsStatusDropdownOpen(!isStatusDropdownOpen)}><Text style={{color: '#fff', fontSize: 16}}>▼</Text></TouchableOpacity>
             </View>
             {isStatusDropdownOpen && (
               <View style={styles.dropdownListContainer}>
                 {allHints1.map((hint, idx) => (
-                  <TouchableOpacity 
-                    key={`line1-${idx}`} 
-                    style={[styles.dropdownItem, idx === allHints1.length - 1 && {borderBottomWidth: 0}]} 
-                    onPress={() => { setStatusHint(hint); setIsStatusDropdownOpen(false); }}
-                  >
+                  <TouchableOpacity key={idx} style={styles.dropdownItem} onPress={() => { setStatusHint(hint); setIsStatusDropdownOpen(false); }}>
                     <Text style={styles.dropdownItemText}>{hint}</Text>
                   </TouchableOpacity>
                 ))}
@@ -864,25 +706,13 @@ export default function App() {
           <Text style={styles.label}>Device Status Line 2:</Text>
           <View style={{zIndex: 1500, marginBottom: 15}}>
             <View style={styles.inputWithDropdownRow}>
-              <TextInput 
-                style={styles.inputWithDropdownText} 
-                value={statusHint2} 
-                onChangeText={setStatusHint2} 
-                placeholder="Enter custom tag or select ▼" 
-                placeholderTextColor="#999"
-              />
-              <TouchableOpacity style={styles.dropdownIconButton} onPress={() => setIsStatus2DropdownOpen(!isStatus2DropdownOpen)}>
-                <Text style={{color: '#fff', fontSize: 16}}>▼</Text>
-              </TouchableOpacity>
+              <TextInput style={styles.inputWithDropdownText} value={statusHint2} onChangeText={setStatusHint2} />
+              <TouchableOpacity style={styles.dropdownIconButton} onPress={() => setIsStatus2DropdownOpen(!isStatus2DropdownOpen)}><Text style={{color: '#fff', fontSize: 16}}>▼</Text></TouchableOpacity>
             </View>
             {isStatus2DropdownOpen && (
               <View style={styles.dropdownListContainer}>
                 {allHints2.map((hint, idx) => (
-                  <TouchableOpacity 
-                    key={`line2-${idx}`} 
-                    style={[styles.dropdownItem, idx === allHints2.length - 1 && {borderBottomWidth: 0}]} 
-                    onPress={() => { setStatusHint2(hint); setIsStatus2DropdownOpen(false); }}
-                  >
+                  <TouchableOpacity key={idx} style={styles.dropdownItem} onPress={() => { setStatusHint2(hint); setIsStatus2DropdownOpen(false); }}>
                     <Text style={styles.dropdownItemText}>{hint}</Text>
                   </TouchableOpacity>
                 ))}
@@ -891,28 +721,18 @@ export default function App() {
           </View>
 
           <Text style={styles.sectionHeader}>Interface & Visuals</Text>
-
           <Text style={[styles.label, {marginTop: 5}]}>Digital Font Style:</Text>
           <View style={{zIndex: 1000, marginBottom: 15}}>
             <TouchableOpacity style={styles.dropdownHeader} onPress={() => setIsFontDropdownOpen(!isFontDropdownOpen)}>
-              <Text style={styles.dropdownHeaderText}>
-                {availableFonts.find(f => f.value === selectedFont)?.label || 'Not set (Normal)'}
-              </Text>
-              <Text style={{color: '#007AFF', fontWeight: 'bold'}}>{isFontDropdownOpen ? '▲' : '▼'}</Text>
+              <Text style={styles.dropdownHeaderText}>{availableFonts.find(f => f.value === selectedFont)?.label || 'normal'}</Text>
+              <Text style={{color: '#007AFF'}}>▼</Text>
             </TouchableOpacity>
-            
             {isFontDropdownOpen && (
               <View style={styles.dropdownListContainer}>
                 <ScrollView nestedScrollEnabled style={{maxHeight: 200}}>
-                  {availableFonts.map((font, index) => (
-                    <TouchableOpacity 
-                      key={font.value} 
-                      style={[styles.dropdownItem, index === availableFonts.length - 1 && {borderBottomWidth: 0}]} 
-                      onPress={() => { setSelectedFont(font.value); setIsFontDropdownOpen(false); }}
-                    >
-                      <Text style={[styles.dropdownItemText, {fontFamily: getFontFamily(font.value)}]}>
-                        {font.label}
-                      </Text>
+                  {availableFonts.map((font) => (
+                    <TouchableOpacity key={font.value} style={styles.dropdownItem} onPress={() => { setSelectedFont(font.value); setIsFontDropdownOpen(false); }}>
+                      <Text style={[styles.dropdownItemText, {fontFamily: getFontFamily(font.value)}]}>{font.label}</Text>
                     </TouchableOpacity>
                   ))}
                 </ScrollView>
@@ -920,129 +740,80 @@ export default function App() {
             )}
           </View>
           
-          <View style={styles.switchRow}>
-            <Text style={styles.label}>Enable 1-Tap Wake Up</Text>
-            <Switch value={allowOneTapReveal} onValueChange={handleOneTapToggle} trackColor={{ true: '#007AFF' }} />
-          </View>
+          <View style={styles.switchRow}><Text style={styles.label}>Enable 1-Tap Wake Up</Text><Switch value={allowOneTapReveal} onValueChange={setAllowOneTapReveal} trackColor={{ true: '#007AFF' }} /></View>
+          <View style={styles.switchRow}><Text style={styles.label}>Enable Odometer Animation</Text><Switch value={enableAnimation} onValueChange={setEnableAnimation} trackColor={{ true: '#007AFF' }} /></View>
+          <View style={styles.switchRow}><Text style={styles.label}>Show 12-Hour Numbers</Text><Switch value={showClockNumbers} onValueChange={setShowClockNumbers} trackColor={{ true: '#007AFF' }} /></View>
 
-          <View style={styles.switchRow}>
-            <Text style={styles.label}>Enable Odometer Animation</Text>
-            <Switch value={enableAnimation} onValueChange={setEnableAnimation} trackColor={{ true: '#007AFF' }} />
-          </View>
-
-          <View style={styles.switchRow}>
-            <Text style={styles.label}>Enable Slow Breathing Fade</Text>
-            <Switch value={enablePulseAnimation} onValueChange={setEnablePulseAnimation} trackColor={{ true: '#007AFF' }} />
-          </View>
-
-          <View style={styles.switchRow}>
-            <Text style={styles.label}>Show 12-Hour Numbers</Text>
-            <Switch value={showClockNumbers} onValueChange={setShowClockNumbers} trackColor={{ true: '#007AFF' }} />
-          </View>
-
-          {renderColorSection(`Background Color`, bgColors, bgColor, handleBgColorSelect, bgSort, setBgSort)}
-          {renderColorSection(`Hour & Min Hand`, mainColors, hourMinColor, handleHandColorSelect, mainSort, setMainSort)}
-          {renderColorSection(`Second Hand`, secondColors, secondColor, setSecondColor, secSort, setSecSort)}
-          {renderColorSection(`Digital Numbers`, digitalColors, digitalColor, setDigitalColor, digiSort, setDigiSort)}
-          {renderColorSection(`Subtext Label`, subtextColors, subTextColor, setSubTextColor, subSort, setSubSort)}
+          <Text style={styles.sectionHeader}>Advanced Color Control</Text>
+          <AdvancedColorPicker label="1. Background Color" color={bgColor} onColorChange={setBgColor} />
+          <AdvancedColorPicker label="2. Main Dial Hands" color={hourMinColor} onColorChange={setHourMinColor} />
+          <AdvancedColorPicker label="3. Second Hand" color={secondColor} onColorChange={setSecondColor} />
+          <AdvancedColorPicker label="4. Digital Numbers" color={digitalColor} onColorChange={setDigitalColor} />
+          <AdvancedColorPicker label="5. Subtext Labels" color={subTextColor} onColorChange={setSubTextColor} />
+          <AdvancedColorPicker label="6. Atmosphere Glow" color={cinematicColor} onColorChange={setCinematicColor} />
 
           <View style={styles.buttonRow}>
-            <View style={{ marginBottom: 15 }}>
-              <Button title="Apply Configuration (Keep Running)" onPress={() => saveSettings(false)} color="#34C759" />
-            </View>
+            <Button title="Apply Configuration" onPress={() => saveSettings(false)} color="#34C759" />
+            <View style={{height: 10}} />
             <Button title="Re-Initialize System" onPress={() => saveSettings(true)} color="#007AFF" />
           </View>
-
-          <View style={{height: 50}} />
+          <View style={{height: 100}} />
         </ScrollView>
       </View>
     );
   }
 
-  const renderDetailed = displayMode === 'time' || (displayMode === 'hidden' && showDigital);
+  const hasMainSub = primarySubtext !== 'NONE' && primarySubtext.trim() !== '';
+  const hasHint1 = statusHint !== 'NONE' && statusHint.trim() !== '';
+  const hasHint2 = statusHint2 !== 'NONE' && statusHint2.trim() !== '';
+  let clockMargin = hasHint1 || hasHint2 || hasMainSub ? 60 : -30;
+
+  const BackgroundComponent = useGradient ? LinearGradient : View;
+  const backgroundProps = useGradient 
+    ? { colors: [bgColor, gradientColor], locations: gradientType === 'circular' ? [0.2, 1] : [0, 1], style: styles.container } 
+    : { style: [styles.container, { backgroundColor: bgColor }] };
 
   return (
-    <Pressable 
-      style={[styles.container, { backgroundColor: bgColor }]}
-      onPress={() => { 
-        if (allowOneTapReveal && !showDigital && displayMode !== 'hidden') {
-          setShowDigital(true);
-        }
-      }} 
-      delayLongPress={5000} 
-      onLongPress={() => setShowSettings(true)}
-    >
-      <Animated.View style={[styles.layoutManager, { opacity: flickerAnim, transform: [{ translateX: glitchTranslateX }] }]}>
-        
-        <View style={[styles.clockWrapper, { marginTop: clockMargin }]}>
-          
-          {enableGlowFX && (
-            <View pointerEvents="none" style={styles.glowContainer}>
-              {renderGlowLayer(400, underglowAnim1, 0, 0.01, 0.04, 0.95, 1.15)}
-              {renderGlowLayer(340, underglowAnim1, 1, 0.03, 0.08, 0.9, 1.1)}
-              {renderGlowLayer(280, underglowAnim2, 2, 0.05, 0.12, 0.85, 1.05)}
-              {renderGlowLayer(220, underglowAnim2, 3, 0.1, 0.2, 0.8, 1.02)}
+    <BackgroundComponent {...backgroundProps}>
+      <Pressable style={{flex:1}} onPress={() => allowOneTapReveal && setShowDigital(true)} delayLongPress={3000} onLongPress={() => setShowSettings(true)}>
+        <StatusBar hidden={true} />
+        <Animated.View style={[styles.layoutManager, { opacity: flickerAnim, transform: [{ translateX: glitchTranslateX }] }]}>
+          <View style={[styles.clockWrapper, {marginTop: clockMargin}]}>
+            {enableGlowFX && <View pointerEvents="none" style={styles.glowContainer}>{renderGlowLayer(360, 0)}{renderGlowLayer(280, 1)}</View>}
+            <View style={styles.handsContainer}>
+              {renderClockNumbers()}
+              <View style={[styles.handWrapper, { transform: [{ rotate: `${(hours%12)*30 + minutes/2}deg` }] }]}><View style={[styles.hourHand, { backgroundColor: hourMinColor }]} /></View>
+              <View style={[styles.handWrapper, { transform: [{ rotate: `${minutes*6}deg` }] }]}><View style={[styles.minuteHand, { backgroundColor: hourMinColor }]} /></View>
+              <View style={[styles.handWrapper, { transform: [{ rotate: `${seconds*6}deg` }] }]}><View style={[styles.secondHand, { backgroundColor: secondColor }]} /></View>
             </View>
-          )}
-
-          <View style={styles.handsContainer}>
-            {renderClockNumbers()}
-            <View style={[styles.handWrapper, { transform: [{ rotate: `${hourDegrees}deg` }] }]}>
-              <View style={[styles.hourHand, { backgroundColor: hourMinColor }]} />
-            </View>
-            <View style={[styles.handWrapper, { transform: [{ rotate: `${minDegrees}deg` }] }]}>
-              <View style={[styles.minuteHand, { backgroundColor: hourMinColor }]} />
-            </View>
-            <View style={[styles.handWrapper, { transform: [{ rotate: `${secDegrees}deg` }] }]}>
-              <View style={[styles.secondHand, { backgroundColor: secondColor }]} />
-              <View style={[styles.secondHandTail, { backgroundColor: secondColor }]} />
-            </View>
-            <View style={[styles.centerCap, { backgroundColor: hourMinColor }]} />
-            <View style={[styles.centerCapInner, { backgroundColor: secondColor }]} />
           </View>
-        </View>
 
-        <Animated.View style={[styles.digitalContainer, { opacity: visibilityAnim }]}>
-          {renderDetailed ? (
-            <View style={styles.timeRow}>
-              <Text style={[styles.digitalText, { color: digitalColor, fontFamily: getFontFamily(selectedFont) }]}>
-                {hoursLeft}<Text style={styles.colon}>:</Text>{minsLeft}<Text style={styles.colon}>:</Text>
-              </Text>
-              {enableAnimation ? (
-                <SlidingSeconds value={secsLeft} textColor={digitalColor} selectedFont={selectedFont} />
-              ) : (
-                <View style={styles.slidingContainer}>
-                  <Text style={[styles.digitalText, styles.odometerText, { color: digitalColor, fontFamily: getFontFamily(selectedFont) }]}>
-                    {secsLeft}
-                  </Text>
-                </View>
-              )}
-            </View>
-          ) : (
-            <Text style={[styles.digitalText, { color: digitalColor, fontFamily: getFontFamily(selectedFont) }]}>{daysLeft}</Text>
-          )}
-          
-          {hasMainSub && (
-            <Text style={[styles.digitalSub, { color: subTextColor, fontFamily: getFontFamily(selectedFont) }]}>
-              {primarySubtext}
-            </Text>
-          )}
-
-          {hasHint1 && (
-            <Text style={[styles.statusHintText, { color: subTextColor, fontFamily: getFontFamily(selectedFont) }]}>
-              [ {statusHint} ]
-            </Text>
-          )}
-          {hasHint2 && (
-            <Text style={[styles.statusHintText, { color: subTextColor, fontFamily: getFontFamily(selectedFont), marginTop: 6 }]}>
-              [ {statusHint2} ]
-            </Text>
-          )}
-
+          <Animated.View style={[styles.digitalContainer, { opacity: visibilityAnim }]}>
+            {renderDetailed ? (
+              <View style={styles.timeRow}>
+                {/* 🚀 FULL TRIPLE ODOMETER */}
+                {enableAnimation ? (
+                  <>
+                    <SlidingOdometer value={hoursLeft} textColor={digitalColor} selectedFont={selectedFont} />
+                    <Text style={[styles.digitalTextMain, { color: digitalColor, fontFamily: getFontFamily(selectedFont) }]}>:</Text>
+                    <SlidingOdometer value={minsLeft} textColor={digitalColor} selectedFont={selectedFont} />
+                    <Text style={[styles.digitalTextMain, { color: digitalColor, fontFamily: getFontFamily(selectedFont) }]}>:</Text>
+                    <SlidingOdometer value={secsLeft} textColor={digitalColor} selectedFont={selectedFont} />
+                  </>
+                ) : (
+                  <Text style={[styles.digitalTextMain, { color: digitalColor, fontFamily: getFontFamily(selectedFont) }]}>{hoursLeft}:{minsLeft}:{secsLeft}</Text>
+                )}
+              </View>
+            ) : (
+              <Text style={[styles.digitalTextMain, { color: digitalColor, fontFamily: getFontFamily(selectedFont) }]}>{daysLeft}</Text>
+            )}
+            {hasMainSub && <Text style={[styles.digitalSub, { color: subTextColor, fontFamily: getFontFamily(selectedFont) }]}>{primarySubtext}</Text>}
+            {hasHint1 && <Text style={[styles.statusHintText, { color: subTextColor, fontFamily: getFontFamily(selectedFont) }]}>[ {statusHint} ]</Text>}
+            {hasHint2 && <Text style={[styles.statusHintText, { color: subTextColor, fontFamily: getFontFamily(selectedFont), marginTop: 6 }]}>[ {statusHint2} ]</Text>}
+          </Animated.View>
         </Animated.View>
-
-      </Animated.View>
-    </Pressable>
+      </Pressable>
+    </BackgroundComponent>
   );
 }
 
@@ -1050,70 +821,58 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   layoutManager: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   clockWrapper: { justifyContent: 'center', alignItems: 'center' },
-  
   glowContainer: { position: 'absolute', width: 400, height: 400, justifyContent: 'center', alignItems: 'center' },
-
   handsContainer: { width: 340, height: 340, justifyContent: 'center', alignItems: 'center' },
   numberContainer: { position: 'absolute', width: 30, height: 30, justifyContent: 'center', alignItems: 'center' },
   clockNumberText: { fontSize: 24, fontWeight: '500' }, 
   handWrapper: { position: 'absolute', width: 340, height: 340, alignItems: 'center', justifyContent: 'flex-start' },
-  
   hourHand: { width: 6, height: 105, marginTop: 65, borderRadius: 3 }, 
   minuteHand: { width: 4, height: 150, marginTop: 20, borderRadius: 2 },
   secondHand: { width: 2, height: 160, marginTop: 10 },
-  secondHandTail: { width: 2, height: 30, position: 'absolute', top: 170 },
-  centerCap: { position: 'absolute', width: 18, height: 18, borderRadius: 9, justifyContent: 'center', alignItems: 'center' },
-  centerCapInner: { width: 6, height: 6, borderRadius: 3, position: 'absolute' },
-  
-  digitalContainer: { position: 'absolute', top: '12%', alignItems: 'center' },
-  digitalText: { fontSize: 56, letterSpacing: 2 },
+  digitalContainer: { position: 'absolute', top: '15%', alignItems: 'center' },
   timeRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center' },
-  colon: { opacity: 0.6, paddingBottom: 5, marginHorizontal: 6 }, 
-  slidingContainer: { height: 65, width: 65, overflow: 'hidden', justifyContent: 'flex-start' },
-  odometerText: { height: 65, lineHeight: 65, textAlign: 'center' },
-  digitalSub: { fontSize: 18, letterSpacing: 4, marginTop: 5 },
-  
-  statusHintText: {
-    fontSize: 14,
-    letterSpacing: 6,
-    marginTop: 22,
-    opacity: 0.35, 
-  },
-  
-  settingsContainer: { flex: 1, backgroundColor: '#f5f5f5' },
-  scrollContent: { padding: 30, paddingTop: 60 },
-  title: { fontSize: 28, fontWeight: 'bold', color: '#333', marginBottom: 20, textAlign: 'center' },
-  sectionHeader: { fontSize: 20, fontWeight: 'bold', color: '#007AFF', marginTop: 20, marginBottom: 10, borderBottomWidth: 1, borderBottomColor: '#ddd', paddingBottom: 5 },
-  paletteSection: { marginTop: 10, marginBottom: 15 },
-  paletteHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 10 },
-  label: { fontSize: 13, color: '#555', fontWeight: '600', marginBottom: 4 },
-  
-  inputWithDropdownRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderWidth: 1, borderColor: '#ccc', borderRadius: 8, overflow: 'hidden' },
-  inputWithDropdownText: { flex: 1, padding: 10, fontSize: 14, color: '#333' },
-  dropdownIconButton: { backgroundColor: '#8e44ad', paddingHorizontal: 15, paddingVertical: 12, justifyContent: 'center', alignItems: 'center' },
-  
-  dropdownHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#fff', borderWidth: 1, borderColor: '#ccc', borderRadius: 8, padding: 12, marginTop: 5 },
-  dropdownHeaderText: { fontSize: 16, color: '#333' },
-  dropdownListContainer: { backgroundColor: '#fff', borderWidth: 1, borderColor: '#ccc', borderRadius: 8, marginTop: 5, overflow: 'hidden', elevation: 3, shadowColor: '#000', shadowOffset: {width: 0, height: 2}, shadowOpacity: 0.1, shadowRadius: 4 },
-  dropdownItem: { padding: 12, borderBottomWidth: 1, borderBottomColor: '#eee' },
-  dropdownItemText: { fontSize: 14, color: '#333' },
-
-  segmentedControl: { flexDirection: 'row', backgroundColor: '#e0e0e0', borderRadius: 8, padding: 4, marginTop: 5, marginBottom: 15 },
-  segmentButton: { flex: 1, paddingVertical: 10, alignItems: 'center', borderRadius: 6 },
-  segmentActive: { backgroundColor: '#FFFFFF', shadowColor: '#000', shadowOffset: {width: 0, height: 1}, shadowOpacity: 0.1, shadowRadius: 2, elevation: 2 },
-  segmentText: { fontSize: 14, color: '#666', fontWeight: '500' },
-  segmentTextActive: { color: '#007AFF', fontWeight: 'bold' },
-
-  dateInfoText: { fontSize: 12, color: '#888', fontStyle: 'italic', marginTop: 12, textAlign: 'center' },
-  sortButton: { backgroundColor: '#e0e0e0', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 15 },
-  sortButtonText: { fontSize: 11, fontWeight: '600', color: '#333' },
-  switchRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 10, marginBottom: 15 },
-  input: { borderWidth: 1, borderColor: '#ccc', backgroundColor: '#fff', color: '#000', padding: 8, borderRadius: 8, fontSize: 16 },
-  frozenContainer: { marginTop: 15, padding: 15, backgroundColor: '#eaeaea', borderRadius: 10 },
-  timeInputRow: { flexDirection: 'row', marginTop: 10, justifyContent: 'space-between' },
+  digitalTextMain: { fontSize: 72, letterSpacing: 2, lineHeight: 80 },
+  slidingSecondsContainer: { height: 80, overflow: 'hidden' },
+  odometerText: { lineHeight: 80 },
+  digitalSub: { fontSize: 16, letterSpacing: 6, marginTop: 15, opacity: 0.8 },
+  statusHintText: { fontSize: 12, letterSpacing: 6, marginTop: 22, opacity: 0.4 },
+  settingsContainer: { flex: 1, backgroundColor: '#1A1A1A' },
+  scrollContent: { padding: 25, paddingTop: 60 },
+  title: { fontSize: 28, fontWeight: 'bold', color: '#FFF', textAlign: 'center' },
+  sectionHeader: { fontSize: 20, fontWeight: 'bold', color: '#007AFF', marginTop: 25, borderBottomWidth: 1, borderBottomColor: '#333' },
+  label: { fontSize: 14, color: '#AAA', fontWeight: '600' },
+  timeInputRow: { flexDirection: 'row', marginTop: 5, justifyContent: 'space-between' },
   timeInputWrapper: { flex: 1 },
-  colorRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  colorSwatch: { width: 32, height: 32, borderRadius: 16, borderWidth: 1, borderColor: '#ccc' },
-  colorSwatchSelected: { borderColor: '#007AFF', borderWidth: 3, transform: [{ scale: 1.15 }] },
-  buttonRow: { marginTop: 30 },
+  input: { borderWidth: 1, borderColor: '#555', backgroundColor: '#333', color: '#FFF', padding: 8, borderRadius: 8 },
+  frozenContainer: { marginTop: 15, padding: 15, backgroundColor: '#2A2A2A', borderRadius: 10 },
+  segmentedControl: { flexDirection: 'row', backgroundColor: '#333', borderRadius: 8, padding: 4 },
+  segmentButton: { flex: 1, paddingVertical: 10, alignItems: 'center', borderRadius: 6 },
+  segmentActive: { backgroundColor: '#555' },
+  segmentText: { fontSize: 14, color: '#AAA' },
+  segmentTextActive: { color: '#FFF', fontWeight: 'bold' },
+  switchRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 10, marginBottom: 15 },
+  optionBtn: { padding: 12, backgroundColor: '#333', borderRadius: 8, marginBottom: 6 },
+  optionBtnActive: { backgroundColor: '#007AFF' },
+  optionText: { color: '#FFF', fontSize: 14, textAlign: 'center' },
+  optionTextActive: { fontWeight: 'bold' },
+  chipBtn: { paddingVertical: 8, paddingHorizontal: 12, backgroundColor: '#333', borderRadius: 20 },
+  chipBtnActive: { backgroundColor: '#FF3B30' },
+  chipText: { color: '#FFF', fontSize: 12 },
+  inputWithDropdownRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#333', borderRadius: 8, overflow: 'hidden' },
+  inputWithDropdownText: { flex: 1, padding: 10, fontSize: 14, color: '#FFF' },
+  dropdownIconButton: { backgroundColor: '#007AFF', paddingHorizontal: 15, paddingVertical: 12 },
+  dropdownHeader: { flexDirection: 'row', justifyContent: 'space-between', backgroundColor: '#333', borderRadius: 8, padding: 12 },
+  dropdownHeaderText: { color: '#FFF' },
+  dropdownListContainer: { backgroundColor: '#333', borderRadius: 8, marginTop: 5 },
+  dropdownItem: { padding: 12, borderBottomWidth: 1, borderBottomColor: '#444' },
+  dropdownItemText: { color: '#FFF' },
+  colorPickerContainer: { backgroundColor: '#2A2A2A', padding: 15, borderRadius: 12, marginBottom: 15 },
+  colorPickerTitle: { color: '#FFF', fontSize: 16, fontWeight: 'bold' },
+  hexInputRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1A1A1A', padding: 10, borderRadius: 8 },
+  colorPreviewBubble: { width: 24, height: 24, borderRadius: 12, marginRight: 10 },
+  hexLabel: { color: '#AAA' },
+  hexInput: { color: '#FFF', fontSize: 16, flex: 1 },
+  sliderRow: { flexDirection: 'row', alignItems: 'center' },
+  slider: { flex: 1, height: 40 },
+  sliderValue: { width: 35, textAlign: 'right', color: '#FFF' },
 });
